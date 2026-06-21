@@ -1,0 +1,378 @@
+<!--
+  Rui Santos
+  Complete project details at https://RandomNerdTutorials.com/
+  Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files.
+  The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>ESP32 Web BLE - SENSOR</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="UTF-8">
+    <link rel="icon" type="image/png" href="favicon.ico">
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<!-- Navigation -->
+<div class="topnav">
+    <h1>ESP32 Web BLE - SENSOR</h1>
+</div>
+<div class="content">
+    <!-- Connect/Disconnect buttons -->
+    <div class="connection-card">
+        <button id="connectBleButton" class="connectButton">&#x1F4F6;&nbsp; Connect to BLE device</button>
+        <button id="disconnectBleButton" class="disconnectButton hidden">&#x274C;&nbsp; Disconnect</button>
+        <div class="ble-status">
+            <span class="ble-dot" id="bleDot"></span>
+            <span id="bleState">Disconnected</span>
+        </div>
+    </div>
+    <!-- Sensor Reading Cards -->
+    <div class="sensor-grid">
+        <div class="sensor-card temp">
+            <span class="sensor-icon">&#x1F321;</span>
+            <div class="sensor-label">Temperature</div>
+            <div class="sensor-value">
+                <span id="tempValue">--</span><span class="sensor-unit" id="tempUnitLabel">&nbsp;&deg;C</span>
+            </div>
+            <div class="sensor-timestamp" id="tempTimestamp">No reading</div>
+            <div class="unit-toggle">
+                <button class="unit-btn active" id="btnC" onclick="setTempUnit('C')">&deg;C</button>
+                <button class="unit-btn" id="btnF" onclick="setTempUnit('F')">&deg;F</button>
+            </div>
+        </div>
+        <div class="sensor-card hum">
+            <span class="sensor-icon">&#x1F4A7;</span>
+            <div class="sensor-label">Humidity</div>
+            <div class="sensor-value">
+                <span id="humValue">--</span><span class="sensor-unit">&nbsp;%</span>
+            </div>
+            <div class="sensor-timestamp" id="humTimestamp">No reading</div>
+        </div>
+        <div class="sensor-card press">
+            <span class="sensor-icon">&#8595;</span>
+            <div class="sensor-label">Pressure</div>
+            <div class="sensor-value">
+                <span id="pressValue">--</span><span class="sensor-unit">&nbsp;hPa</span>
+            </div>
+            <div class="sensor-timestamp" id="pressTimestamp">No reading</div>
+        </div>
+    </div>
+    <!-- Charts -->
+    <div class="charts-section">
+        <div class="chart-card">
+            <div class="chart-card-header">
+                <h2>&#x1F321;&nbsp; Temperature</h2>
+            </div>
+            <div class="chart-wrapper">
+                <canvas id="tempChart" role="img"></canvas>
+            </div>
+        </div>
+        <div class="chart-card">
+            <div class="chart-card-header">
+                <h2>&#x1F4A7;&nbsp; Humidity</h2>
+            </div>
+            <div class="chart-wrapper">
+                <canvas id="humChart" role="img"></canvas>
+            </div>
+        </div>
+        <div class="chart-card">
+            <div class="chart-card-header">
+                <h2>&#8595;&nbsp; Pressure</h2>
+            </div>
+            <div class="chart-wrapper">
+                <canvas id="pressChart" role="img"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="footer">
+    <p><a href="https://randomnerdtutorials.com/" target="_blank">Created by RandomNerdTutorials.com - Read the Complete Project »</a></p>
+</div>
+<script>
+    // DOM Elements
+    const connectButton = document.getElementById('connectBleButton');
+    const disconnectButton = document.getElementById('disconnectBleButton');
+    const bleStateEl = document.getElementById('bleState');
+    const bleDot = document.getElementById('bleDot');
+  
+    const tempValueEl = document.getElementById('tempValue');
+    const humValueEl = document.getElementById('humValue');
+    const pressValueEl = document.getElementById('pressValue');
+    const tempTimestamp = document.getElementById('tempTimestamp');
+    const humTimestamp = document.getElementById('humTimestamp');
+    const pressTimestamp = document.getElementById('pressTimestamp');
+    const tempUnitLabel = document.getElementById('tempUnitLabel');
+
+    // BLE UUIDs
+    var deviceName    = 'ESP32';
+    var bleService    = '0000181a-0000-1000-8000-00805f9b34fb';
+    var tempCharUUID  = '00002a6e-0000-1000-8000-00805f9b34fb';
+    var humCharUUID   = '00002a6f-0000-1000-8000-00805f9b34fb';
+    var pressCharUUID = '00002a6d-0000-1000-8000-00805f9b34fb';
+
+    // BLE state
+    var bleServer;
+    var tempCharFound;
+    var humCharFound;
+    var pressCharFound;
+    var userDisconnected = false;
+
+    // Sensor state
+    var currentUnit = 'C';
+    var lastTempC = null;
+    const MAX_POINTS = 60;
+    var tempData = { labels: [], valuesC: [], valuesF: [] };
+    var humData = { labels: [], values: [] };
+    var pressData = { labels: [], values: [] };
+
+    // Charts
+    function drawChart(canvasId, color, yLabel) {
+        return new Chart(document.getElementById(canvasId), {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: yLabel,
+                    borderColor: color,
+                    backgroundColor: color + '18',
+                    borderWidth: 2,
+                    pointRadius: 3,
+                    pointHoverRadius: 5,
+                    tension: 0.3,
+                    fill: true,
+                    data: []
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { duration: 300 },
+                interaction: { mode: 'index', intersect: false },
+                scales: {
+                    x: {
+                        ticks: { font: { size: 11 }, maxRotation: 45, autoSkip: true, maxTicksLimit: 10 },
+                        grid: { color: 'rgba(0,0,0,0.05)' }
+                    },
+                    y: {
+                        title: { display: true, text: yLabel, font: { size: 11 } },
+                        grid: { color: 'rgba(0,0,0,0.05)' }
+                    }
+                },
+                plugins: { legend: { display: false } }
+            }
+        });
+    }
+
+    var tempChart = drawChart('tempChart', '#e07b3a', 'Temperature (°C)');
+    var humChart = drawChart('humChart', '#3a90c4', 'Humidity (%)');
+    var pressChart = drawChart('pressChart', '#7c5cbf', 'Pressure (hPa)');
+
+    // Temperature unit toggle
+    function setTempUnit(unit) {
+        currentUnit = unit;
+        document.getElementById('btnC').classList.toggle('active', unit === 'C');
+        document.getElementById('btnF').classList.toggle('active', unit === 'F');
+        tempUnitLabel.innerHTML = '&nbsp;&deg;' + unit;
+        refreshTempDisplay();
+        refreshTempChart();
+    }
+
+    function cToF(c) {
+        return (c * 9 / 5 + 32).toFixed(1);
+    }
+
+    function refreshTempDisplay() {
+        if (lastTempC === null) return;
+        tempValueEl.textContent = currentUnit === 'C'
+            ? parseFloat(lastTempC).toFixed(1)
+            : cToF(parseFloat(lastTempC));
+    }
+
+    function refreshTempChart() {
+        tempChart.data.labels = tempData.labels;
+        tempChart.data.datasets[0].data = currentUnit === 'C' ? tempData.valuesC : tempData.valuesF;
+        tempChart.data.datasets[0].label = currentUnit === 'C' ? 'Temperature (°C)' : 'Temperature (°F)';
+        tempChart.options.scales.y.title.text = currentUnit === 'C' ? 'Temperature (°C)' : 'Temperature (°F)';
+        tempChart.update();
+    }
+
+    function pushPoint(dataObj, chart, label, value, extraValue = null) {
+        dataObj.labels.push(label);
+        if (extraValue !== null) {
+            dataObj.valuesC.push(value);
+            dataObj.valuesF.push(extraValue);
+        } else {
+            dataObj.values.push(value);
+        }
+        if (dataObj.labels.length > MAX_POINTS) {
+            dataObj.labels.shift();
+            if (extraValue !== null) {
+                dataObj.valuesC.shift();
+                dataObj.valuesF.shift();
+            } else {
+                dataObj.values.shift();
+            }
+        }
+        chart.data.labels = dataObj.labels;
+        if (extraValue !== null) {
+            chart.data.datasets[0].data = currentUnit === 'C' ? dataObj.valuesC : dataObj.valuesF;
+        } else {
+            chart.data.datasets[0].data = dataObj.values;
+        }
+        chart.update('none');
+    }
+
+    // BLE UI helpers
+    function showConnectButton() {
+        connectButton.classList.remove('hidden');
+        disconnectButton.classList.add('hidden');
+    }
+
+    function showDisconnectButton() {
+        connectButton.classList.add('hidden');
+        disconnectButton.classList.remove('hidden');
+    }
+
+    function setBleConnected(deviceName) {
+        bleStateEl.textContent = 'Connected to ' + deviceName;
+        bleDot.className = 'ble-dot connected';
+        showDisconnectButton();
+    }
+
+    function setBleDisconnected(msg) {
+        bleStateEl.textContent = msg || 'Disconnected';
+        bleDot.className = 'ble-dot';
+        showConnectButton();
+    }
+
+    function isWebBluetoothEnabled() {
+        if (!navigator.bluetooth) {
+            setBleDisconnected('Web Bluetooth not available in this browser');
+            return false;
+        }
+        return true;
+    }
+
+    // Connect BLE handler
+    async function connectToDevice() {
+        userDisconnected = false;
+        try {
+            const device = await navigator.bluetooth.requestDevice({
+                filters: [{ name: deviceName }],
+                optionalServices: [bleService]
+            });
+
+            device.addEventListener('gattserverdisconnected', onDisconnected);
+            const gattServer = await device.gatt.connect();
+            
+            bleServer = gattServer;
+            setBleConnected(gattServer.device.name);
+
+            const service = await gattServer.getPrimaryService(bleService);
+
+            await subscribeChar(service, tempCharUUID, handleTemp, v => { tempCharFound = v; });
+            await subscribeChar(service, humCharUUID, handleHum, v => { humCharFound = v; });
+            await subscribeChar(service, pressCharUUID, handlePress, v => { pressCharFound = v; });
+
+        } catch (err) {
+            console.error('Connection error:', err);
+            setBleDisconnected('Connection failed: ' + err.message);
+        }
+    }
+
+    async function subscribeChar(service, uuid, handler, storeFn) {
+        try {
+            const char = await service.getCharacteristic(uuid);
+            storeFn(char);
+            
+            char.addEventListener('characteristicvaluechanged', handler);
+            await char.startNotifications();
+            
+            try {
+                const val = await char.readValue();
+                await new Promise(resolve => setTimeout(resolve, 50));
+                handler({ target: { value: val } });
+            } catch (readErr) {
+                console.warn('Initial read failed for', uuid, ':', readErr);
+            }
+            
+            console.log(`Subscribed to ${uuid}`);
+            return char;
+        } catch (err) {
+            console.warn('Could not subscribe to', uuid, ':', err);
+            throw err;
+        }
+    }
+
+    // Characteristic handlers
+    function handleTemp(event) {
+        var val = parseFloat(new TextDecoder().decode(event.target.value));
+        if (isNaN(val)) return;
+        lastTempC = val;
+        refreshTempDisplay();
+        var ts = getTime();
+        tempTimestamp.textContent = 'Last reading: ' + ts;
+        const valC = parseFloat(val.toFixed(1));
+        const valF = parseFloat(cToF(val));
+        pushPoint(tempData, tempChart, ts, valC, valF);
+    }
+
+    function handleHum(event) {
+        var val = parseFloat(new TextDecoder().decode(event.target.value));
+        if (isNaN(val)) return;
+        humValueEl.textContent = val.toFixed(1);
+        var ts = getTime();
+        humTimestamp.textContent = 'Last reading: ' + ts;
+        pushPoint(humData, humChart, ts, parseFloat(val.toFixed(1)));
+    }
+
+    function handlePress(event) {
+        var val = parseFloat(new TextDecoder().decode(event.target.value));
+        if (isNaN(val)) return;
+        pressValueEl.textContent = val.toFixed(1);
+        var ts = getTime();
+        pressTimestamp.textContent = 'Last reading: ' + ts;
+        pushPoint(pressData, pressChart, ts, parseFloat(val.toFixed(1)));
+    }
+
+    // Disconnect handlers
+    function onDisconnected(event) {
+        if (!userDisconnected) {
+            setBleDisconnected('Device disconnected unexpectedly');
+        }
+    }
+
+    function disconnectDevice() {
+        if (!bleServer || !bleServer.connected) {
+            alert('Bluetooth is not connected.');
+            return;
+        }
+        userDisconnected = true;
+        const stops = [];
+        if (tempCharFound) stops.push(tempCharFound.stopNotifications().catch(() => {}));
+        if (humCharFound) stops.push(humCharFound.stopNotifications().catch(() => {}));
+        if (pressCharFound) stops.push(pressCharFound.stopNotifications().catch(() => {}));
+        
+        Promise.all(stops)
+            .then(() => bleServer.disconnect())
+            .then(() => setBleDisconnected('Disconnected'))
+            .catch(err => console.error('Disconnect error:', err));
+    }
+
+    function getTime() {
+        var d = new Date();
+        var p = n => ('00' + n).slice(-2);
+        return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+    }
+
+    // Button listeners
+    connectButton.addEventListener('click', () => {
+        if (isWebBluetoothEnabled()) connectToDevice();
+    });
+    disconnectButton.addEventListener('click', disconnectDevice);
+</script>
+</body>
+</html>
