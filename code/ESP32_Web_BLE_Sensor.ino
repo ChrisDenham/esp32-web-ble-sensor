@@ -78,7 +78,7 @@ void notifyFloat(BLECharacteristic* pChar, float value) {
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("\nESP32 BME280 BLE Server starting...");
+  Serial.println("\nESP32 DHT11 BLE Server starting...");
 
   // Initialize DHT11 Sensor
   dht.begin();
