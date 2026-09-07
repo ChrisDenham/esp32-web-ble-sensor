@@ -8,16 +8,30 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
-#include <Wire.h>
-#include <Adafruit_Sensor.h>
-#include <Adafruit_BME280.h>
 
-// BME280 GPIOs
-#define SDA_PIN 21
-#define SCL_PIN 22
+#include <DHT.h>
 
-// BME280 
-Adafruit_BME280 bme;
+#define DHTPIN 5     // Digital pin connected to the DHT sensor
+// Feather HUZZAH ESP8266 note: use pins 3, 4, 5, 12, 13 or 14 --
+// Pin 15 can work but DHT must be disconnected during program upload.
+
+// Uncomment whatever type you're using!
+#define DHTTYPE DHT11   // DHT 11
+//#define DHTTYPE DHT22   // DHT 22  (AM2302), AM2321
+//#define DHTTYPE DHT21   // DHT 21 (AM2301)
+
+// Connect pin 1 (on the left) of the sensor to +5V
+// NOTE: If using a board with 3.3V logic like an Arduino Due connect pin 1
+// to 3.3V instead of 5V!
+// Connect pin 2 of the sensor to whatever your DHTPIN is
+// Connect pin 4 (on the right) of the sensor to GROUND
+// Connect a 10K resistor from pin 2 (data) to pin 1 (power) of the sensor
+
+// Initialize DHT sensor.
+// Note that older versions of this library took an optional third parameter to
+// tweak the timings for faster processors.  This parameter is no longer needed
+// as the current DHT reading algorithm adjusts itself to work on faster procs.
+DHT dht(DHTPIN, DHTTYPE);
 
 // BLE UUIDs 
 // Environmental Sensing Service
@@ -66,12 +80,8 @@ void setup() {
   Serial.begin(115200);
   Serial.println("\nESP32 BME280 BLE Server starting...");
 
-  // Initialize BME280 Sensor
-  Wire.begin(SDA_PIN, SCL_PIN);
-  if (!bme.begin(0x76)) { 
-    Serial.println("BME280 not found!");
-    while(1); 
-  }
+  // Initialize DHT11 Sensor
+  dht.begin();
 
   // ESP32 BLE init
   BLEDevice::init("ESP32");
@@ -125,9 +135,9 @@ void loop() {
   if (now - lastSampleMs >= SAMPLE_INTERVAL_MS) {
     lastSampleMs = now;
 
-    float tempC     = bme.readTemperature();   // °C
-    float humidity  = bme.readHumidity();      // %
-    float pressurePa  = bme.readPressure();    // Pa
+    float tempC     = dht.readTemperature();   // °C
+    float humidity  = dht.readHumidity();      // %
+    float pressurePa  = 0.0;    // Pa
     float pressureHPa = pressurePa / 100.0F;   // hPa
 
     Serial.printf("Temp: %.1f °C  Hum: %.1f %%  Press: %.1f hPa\n",
